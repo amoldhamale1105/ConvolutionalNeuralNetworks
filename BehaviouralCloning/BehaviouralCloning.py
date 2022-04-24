@@ -5,12 +5,13 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
 import keras
 from keras.models import Sequential
 from keras.models import Model
 from keras.layers import Dense
 from keras.layers import Flatten
-from keras.layers.convolutional import Conv2D
+from keras.layers.convolutional import Convolution2D
 from keras.layers.convolutional import MaxPooling2D
 from keras.layers import Dropout
 from keras.optimizers import adam_v2
@@ -86,3 +87,70 @@ axes[0].set_title('Training set')
 axes[1].hist(y_val, bins=num_bins, width=0.05, color='red')
 axes[1].set_title('Validation set')
 
+
+def img_preprocess(img):
+  img = mpimg.imread(img)
+  img = img[60:135, :, :]
+  img = cv2.cvtColor(img, cv2.COLOR_RGB2YUV)
+  img = cv2.GaussianBlur(img, (3,3), 0)
+  img = cv2.resize(img, (200, 66))
+  img = img/255
+  return img
+
+image = image_paths[100]
+original_image = mpimg.imread(image)
+preproc_image = img_preprocess(image)
+
+fig, axs = plt.subplots(1, 2, figsize=(15,10))
+fig.tight_layout()
+axs[0].imshow(original_image)
+axs[0].set_title('Original Image')
+axs[1].imshow(preproc_image)
+axs[1].set_title('Preprocessed Image')
+
+X_train = np.array(list(map(img_preprocess, X_train)))
+X_val = np.array(list(map(img_preprocess, X_val)))
+
+plt.imshow(X_train[random.randint(0, len(X_train)-1)])
+plt.axis('off')
+print(X_train.shape)
+
+def nvidia_model():
+  model = Sequential()
+  model.add(Convolution2D(24, kernel_size=(5, 5), strides=(2,2), input_shape=(66, 200, 3), activation='elu'))
+  model.add(Convolution2D(36, kernel_size=(5, 5), strides=(2,2), activation='elu'))
+  model.add(Convolution2D(48, kernel_size=(5, 5), strides=(2,2), activation='elu'))
+  model.add(Convolution2D(64, kernel_size=(3, 3), activation='elu'))
+  model.add(Convolution2D(64, kernel_size=(3, 3), activation='elu'))
+  model.add(Dropout(0.5))
+
+  model.add(Flatten())
+  model.add(Dense(100, activation='elu'))
+  model.add(Dropout(0.5))
+
+  model.add(Dense(50, activation='elu'))
+  model.add(Dropout(0.5))
+
+  model.add(Dense(10, activation='elu'))
+  model.add(Dropout(0.5))
+  
+  model.add(Dense(1))
+
+  model.compile(loss='mse', optimizer=adam_v2.Adam(learning_rate=0.001))
+  return model
+
+model = nvidia_model()
+print(model.summary())
+
+history = model.fit(X_train, y_train, epochs=30, validation_data=(X_val, y_val), batch_size=100, verbose=1, shuffle=1)
+
+plt.plot(history.history['loss'])
+plt.plot(history.history['val_loss'])
+plt.legend(['training', 'validation'])
+plt.title('Loss')
+plt.xlabel('Epoch')
+
+model.save('model.h5')
+
+from google.colab import files
+files.download('model.h5')
