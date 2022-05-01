@@ -1,6 +1,10 @@
 !git clone https://github.com/amoldhamale1105/AutonomousCarTrackData.git
 
+!cd AutonomousCarTrackData && git pull
+
 !ls AutonomousCarTrackData
+
+!pip3 install imgaug
 
 import os
 import numpy as np
@@ -18,6 +22,7 @@ from keras.optimizers import adam_v2
 from keras.utils.np_utils import to_categorical
 from sklearn.utils import shuffle
 from sklearn.model_selection import train_test_split
+from imgaug import augmenters as iaa
 import cv2
 import pandas as pd
 import ntpath
@@ -38,7 +43,7 @@ data['right'] = data['right'].apply(path_leaf)
 data.head()
 
 num_bins = 25
-samples_per_bin = 200
+samples_per_bin = 400
 hist, bins = np.histogram(data['steering'], num_bins)
 center = (bins[:-1] + bins[1:]) * 0.5 #Make the data zero centered using adjacent element wise addition
 plt.bar(center, hist, width=0.05)
@@ -88,8 +93,106 @@ axes[1].hist(y_val, bins=num_bins, width=0.05, color='red')
 axes[1].set_title('Validation set')
 
 
+def zoom(image):
+  zoom = iaa.Affine(scale=(1,1.3))
+  image = zoom.augment_image(image)
+  return image
+
+image = image_paths[random.randint(0, 1000)]
+original_image = mpimg.imread(image)
+zoomed_image = zoom(original_image)
+
+fig, axs = plt.subplots(1, 2, figsize=(15,10))
+fig.tight_layout()
+axs[0].imshow(original_image)
+axs[0].set_title('Original Image')
+axs[1].imshow(zoomed_image)
+axs[1].set_title('Zoomed Image')
+
+def pan(image):
+  pan = iaa.Affine(translate_percent={"x": (-0.1,0.1), "y": (-0.1,0.1)})
+  image = pan.augment_image(image)
+  return image
+
+image = image_paths[random.randint(0, 1000)]
+original_image = mpimg.imread(image)
+panned_image = pan(original_image)
+
+fig, axs = plt.subplots(1, 2, figsize=(15,10))
+fig.tight_layout()
+axs[0].imshow(original_image)
+axs[0].set_title('Original Image')
+axs[1].imshow(panned_image)
+axs[1].set_title('Panned Image')
+
+def img_random_brightness(image):
+  brightness = iaa.Multiply((0.2, 1.2))
+  image = brightness.augment_image(image)
+  return image
+
+image = image_paths[random.randint(0, 1000)]
+original_image = mpimg.imread(image)
+brightness_altered_image = img_random_brightness(original_image)
+
+fig, axs = plt.subplots(1, 2, figsize=(15,10))
+fig.tight_layout()
+axs[0].imshow(original_image)
+axs[0].set_title('Original Image')
+axs[1].imshow(brightness_altered_image)
+axs[1].set_title('Brightness Altered Image')
+
+def img_random_flip(image, steering_angle):
+  image = cv2.flip(image, 1)
+  steering_angle = -steering_angle #because horizontal flipping will essentially mirror the image along y-axis negating the current steering angle
+  return image, steering_angle
+
+random_index = random.randint(0, 1000)
+image = image_paths[random_index]
+steering_angle = steerings[random_index]
+
+original_image = mpimg.imread(image)
+flipped_image, flipped_steering_angle = img_random_flip(original_image, steering_angle)
+print('Original steer angle: {}\nFlipped steer angle: {}'.format(steering_angle, flipped_steering_angle))
+
+fig, axs = plt.subplots(1, 2, figsize=(15,10))
+fig.tight_layout()
+axs[0].imshow(original_image)
+axs[0].set_title('Original Image')
+axs[1].imshow(flipped_image)
+axs[1].set_title('Flipped Image')
+
+def random_augment(image, steering_angle):
+  image = mpimg.imread(image)
+  if np.random.rand() < 0.5:
+    image = pan(image)
+  if np.random.rand() < 0.5:
+    image = zoom(image)
+  if np.random.rand() < 0.5:
+    image = img_random_brightness(image)
+  if np.random.rand() < 0.5:
+    image, steering_angle = img_random_flip(image, steering_angle)
+  return image, steering_angle
+
+ncol = 2
+nrow = 10
+fig, axs = plt.subplots(nrow, ncol, figsize=(15,50))
+fig.tight_layout()
+
+for i in range(10):
+  randnum = random.randint(0, len(image_paths)-1)
+  random_image = image_paths[randnum]
+  random_steer = steerings[randnum]
+
+  original_image = mpimg.imread(random_image)
+  augmented_image, steering = random_augment(random_image, random_steer)
+
+  axs[i][0].imshow(original_image)
+  axs[i][0].set_title('Original Image')
+
+  axs[i][1].imshow(augmented_image)
+  axs[i][1].set_title('Augmented Image')
+
 def img_preprocess(img):
-  img = mpimg.imread(img)
   img = img[60:135, :, :]
   img = cv2.cvtColor(img, cv2.COLOR_RGB2YUV)
   img = cv2.GaussianBlur(img, (3,3), 0)
@@ -99,7 +202,7 @@ def img_preprocess(img):
 
 image = image_paths[100]
 original_image = mpimg.imread(image)
-preproc_image = img_preprocess(image)
+preproc_image = img_preprocess(original_image)
 
 fig, axs = plt.subplots(1, 2, figsize=(15,10))
 fig.tight_layout()
@@ -108,12 +211,35 @@ axs[0].set_title('Original Image')
 axs[1].imshow(preproc_image)
 axs[1].set_title('Preprocessed Image')
 
-X_train = np.array(list(map(img_preprocess, X_train)))
-X_val = np.array(list(map(img_preprocess, X_val)))
+def batch_generator(image_paths, steering_ang, batch_size, istraining):
+  while True:
+    batch_img = []
+    batch_steering = []
 
-plt.imshow(X_train[random.randint(0, len(X_train)-1)])
-plt.axis('off')
-print(X_train.shape)
+    for i in range(batch_size):
+      random_index = random.randint(0, len(image_paths)-1)
+
+      if istraining:
+        image, steering = random_augment(image_paths[random_index], steering_ang[random_index])
+      else:
+        image = mpimg.imread(image_paths[random_index])
+        steering = steering_ang[random_index]
+      
+      image = img_preprocess(image)
+      batch_img.append(image)
+      batch_steering.append(steering)
+    
+    yield (np.asarray(batch_img), np.asarray(batch_steering))
+
+X_train_gen, y_train_gen = next(batch_generator(X_train, y_train, 1, 1))
+X_val_gen, y_val_gen = next(batch_generator(X_val, y_val, 1, 0))
+
+fig, axs = plt.subplots(1, 2, figsize=(15,10))
+fig.tight_layout()
+axs[0].imshow(X_train_gen[0])
+axs[0].set_title('Training Image')
+axs[1].imshow(X_val_gen[0])
+axs[1].set_title('Validation Image')
 
 def nvidia_model():
   model = Sequential()
@@ -122,27 +248,27 @@ def nvidia_model():
   model.add(Convolution2D(48, kernel_size=(5, 5), strides=(2,2), activation='elu'))
   model.add(Convolution2D(64, kernel_size=(3, 3), activation='elu'))
   model.add(Convolution2D(64, kernel_size=(3, 3), activation='elu'))
-  model.add(Dropout(0.5))
+  #model.add(Dropout(0.5))
 
   model.add(Flatten())
   model.add(Dense(100, activation='elu'))
-  model.add(Dropout(0.5))
+  #model.add(Dropout(0.5))
 
   model.add(Dense(50, activation='elu'))
-  model.add(Dropout(0.5))
+  #model.add(Dropout(0.5))
 
   model.add(Dense(10, activation='elu'))
-  model.add(Dropout(0.5))
+  #model.add(Dropout(0.5))
   
   model.add(Dense(1))
 
-  model.compile(loss='mse', optimizer=adam_v2.Adam(learning_rate=0.001))
+  model.compile(loss='mse', optimizer=adam_v2.Adam(learning_rate=0.0001))
   return model
 
 model = nvidia_model()
 print(model.summary())
 
-history = model.fit(X_train, y_train, epochs=30, validation_data=(X_val, y_val), batch_size=100, verbose=1, shuffle=1)
+history = model.fit(batch_generator(X_train, y_train, 100, 1), steps_per_epoch=300, epochs=10, validation_data=batch_generator(X_val, y_val, 100, 0), validation_steps=200, verbose=1, shuffle=1)
 
 plt.plot(history.history['loss'])
 plt.plot(history.history['val_loss'])
